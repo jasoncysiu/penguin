@@ -1,0 +1,291 @@
+---
+title: "Model examination for a dataset of penguin"
+date: "Jason Ching Yuen, Siu"
+output:
+  html_document:
+    after_body: tutorial-footer.html
+    css: report.css
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE, 
+  collapse = TRUE,
+  echo = FALSE,
+  comment = "#",
+  fig.height = 4,
+  fig.width = 8,
+  out.width = "100%",
+  fig.align = "center",
+  fig.retina = 4,
+  cache = FALSE,
+  options(scipen = 1, digit = 4),
+  include =  T
+)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(boot) #Q4E
+library(ggrepel) #Q4G
+library(kableExtra)
+library(GGally) #3A
+```
+
+
+
+### Data description
+
+This dataset contains categorical variable. We are to examine models for a categorical variable
+
+The `palmerpenguins` is a new R data package, with interesting measurements on penguins of three different species. Subset the data to contain just the Adelie and Gentoo species, and only the variables species and the four physical size measurement variables. Use standardised variables for answering all of the questions.
+
+```{r}
+library(palmerpenguins)
+penguin <- penguins %>%
+  filter(species != "Gentoo") %>%
+  select(species, bill_length_mm:body_mass_g)
+
+std <- function(x) (x-mean(x, na.rm=TRUE))/sd(x, na.rm=TRUE)
+
+penguins_std <- penguin %>%
+  mutate_if(is.numeric, std) %>%
+  drop_na() %>%
+  rename(bl = bill_length_mm,
+         bd = bill_depth_mm,
+         fl = flipper_length_mm,
+         bm = body_mass_g)
+
+```
+
+### Exploratory analysis
+
+Make a scatterplot matrix of the data, with species mapped to colour. Which variable(s) would you expect to be the most important for distinguishing between the species? 
+
+
+```{r 3A, echo = F,include=T}
+ggscatmat(penguins_std, columns = 2:5, color = "species") +
+  scale_color_brewer("", palette = "Dark2") +theme_bw()
+```
+
+**The shapes of all variables are overlapped for classifying both groups (which is not good), except the one of bl, therefore, bl is the most important variable to distinguish the group.**
+
+### Data spiliting
+Break the data into training and test sets, using stratified sampling, and with 2022 as the random number seed.
+```{r 3B}
+# Break the data into training and test sets, using stratified sampling, and with 2022 as the random number seed
+
+#dummy variable where Adelie are coded as 0, and Chinstrap are coded as 1. 
+penguins_b4Split <- penguins_std %>% 
+  mutate(dummy_species = ifelse(species=="Adelie",0,1))%>% 
+  select(-species)
+penguins_b4Split$dummy_species <- as.factor(penguins_b4Split$dummy_species)
+set.seed(2022)
+# An 80/20 split of the data
+train_test_split <- initial_split(penguins_b4Split, prop = 2/3, strata=  dummy_species)
+
+penguins_train <- training(train_test_split)
+penguins_test <- testing(train_test_split)
+
+# Fit a logistic regression model to the data
+logistic_mod <- logistic_reg() %>% 
+  set_engine("glm") %>% #Set the engine
+  set_mode("classification") %>%  #Set the mode
+  translate()
+
+penguin_fit <- 
+  logistic_mod %>% 
+  fit(dummy_species ~ ., 
+      data = penguins_train)
+
+# Report the model summary, including parameter estimates, and the overall and species misclassification rates. (Note: There is a warning from the model fitting in R
+
+tidy(penguin_fit)  %>% 
+ kbl ( caption = "Model Summary")%>% 
+   kable_paper("hover")
+
+# misclassification rates.
+penguin_pred <- augment(penguin_fit, penguins_train)
+
+penguin_pred %>% 
+  count(dummy_species, .pred_class) %>%
+  pivot_wider(names_from = dummy_species, values_from = n, values_fill = 0)%>% 
+  kbl ( caption = "Confusion Matrix (Training set)")%>% 
+   kable_paper("hover")
+
+```
+
+### Logistic model
+Fit a logistic regression model to the data, where Adelie are coded as 0, and Chinstrap are coded as 1. Report the model summary, including parameter estimates, and the overall and species misclassification rates. (Note: There is a warning from the model fitting in R. What does this mean? Will it invalidate what can be the model fit?) 
+
+**For this analysis, we are interested to explore the categorization of Adelie and Chinstrap, which are coded as 0 and 1 respectively.**
+
+**The summary tells that 1) all the variables are of significance, given all p-values >0.05. 2)  The estimates are $b_0=-83.08172, ~b_1=177.55664, ~b_2=-48.79091, ~b_3=5.79094, ~b_4=-56.75641$**
+
+**The confusion table tells that the data is perfectly fitting the penguin species，with misclassification rate being 0; this attributes to bl being able to distinguish most of the species when regressed against bd, fl, bm.**
+
+**The warning message tells that the current model has perfect fit. The current predictors are two complete separation (i.e., 0 or 1), which is common in logistic regression. Based on the slides - "Logistic regression model fitting fails when the data is perfectly separated." - we can conclude that it will invalidate what can be the model fit.**
+
+
+```{r}
+d <-  penguins_test %>%
+  # mutate(pred = (exp(-6.05 + 2.15*x))/(1+exp(-6.05 + 2.15*x)))
+  mutate(pred=  exp (177.56* bl - 48.79 * bd + 5.79 * fl - 56.75 * bm -83.03)/(1 + exp(177.56* bl - 48.79 * bd + 5.79 * fl - 56.75 * bm -83.08)))
+
+# tidy(penguin_fit)
+```
+
+
+### Math equation
+Write down the fitted logistic regression model, mathematically. Explain how this would be used for classifying the two species (in 30 words or less).
+
+$$\begin{aligned}P(species = Chinstrap~|~\widehat{\beta_0} + \widehat{\beta_1} \times bl + \widehat{\beta_2}\times bd + \widehat{\beta_3}\times fl + \widehat{\beta_4}\times bm) 
+\\ =\frac{exp ^{177.56\times bl - 48.79 \times bd + 5.79 \times fl - 56.75 \times bm -83.03}}{1 + exp^{
+177.56\times bl - 48.79 \times bd + 5.79 \times fl - 56.75 \times bm -83.08}} \end{aligned}$$
+ 
+**The probability of a certain species is classified with the given observed value of the variables. Let's say we are to calculate the probability of the species being Chinstrap (i.e., coded as 1 in this case), given that all observed value of those variables. If it is >0.5, we classify it as Chinstrap, otherwise as Adelie.**
+
+
+### Plot about how well the species are separated.
+
+```{r}
+d_aug_prob_fit <- augment(penguin_fit$fit, 
+                      penguins_train,
+                      type.predict = "link")
+
+
+d_aug_prob <-  augment(penguin_fit, 
+                      penguins_train,
+                      type.predict = "link")
+d_aug_prob <- merge(d_aug_prob,d_aug_prob_fit) 
+
+# Plot fitted values for probability scale
+d_aug_prob %>% 
+  ggplot() +
+  geom_point(aes(x = .fitted, y = .pred_class, 
+color = dummy_species), size = 2) +theme_bw()
+
+
+```
+
+**The fitted values of a simple linear regression are linear combinations of the observed variables. Therefore, we can make this line to be the x-axis.**
+**Same as illustrated from the confusion matrix, the species are separated perfectly, with the point of 0 being the separation**
+
+
+
+
+### Prediction 1
+
+Predict the class of a penguin with these characteristics: bill_length_mm = 45, bill_depth_mm = 18, flipper_length_mm = 190, body_mass_g = 3750. How confident are we in our prediction?
+
+```{r include=F}
+new_ob <- tibble(species = "Unknown",bill_length_mm = 45, bill_depth_mm = 18, flipper_length_mm = 190, body_mass_g = 3750)
+
+
+pgn_NewOb_std <- penguin %>% 
+  rbind(new_ob) %>% ## bind the row of the new obs
+  mutate_if(is.numeric, std) %>%
+  drop_na() %>%
+  rename(bl = bill_length_mm,
+         bd = bill_depth_mm,
+         fl = flipper_length_mm,
+         bm = body_mass_g) %>% 
+  filter(species == "Unknown")
+
+exp (177.56* 0.5625594 + 48.79 * 0.3096768  - 5.79 * 0.2446322  - 56.75 * 0.08981022 -83.03) / (1 + exp (177.56* 0.5625594 + 48.79 * 0.3096768  - 5.79 * 0.2446322  - 56.75 * 0.08981022 -83.03)) # the class is 1
+ 
+```
+$$\begin{aligned}P(species = Chinstrap|\widehat{\beta_0} + \widehat{\beta_1} \times bl + \widehat{\beta_2}\times bd + \widehat{\beta_3}\times fl + \widehat{\beta_4}\times bm) 
+\\ \\ =\frac{exp ^{177.56\times 0.56 - 48.79 \times -0.31 + 5.79 \times -0.24 - 56.75 \times 0.09 -83.03}}{1 + exp^{
+177.56\times 0.56 - 48.79 \times -0.31 + 5.79 \times -0.24 - 56.75 \times 0.09 -83.08}} \end{aligned}
+\\ = 1$$
+
+**Based on the model, the illustrated calculation is closed to 1, hence we can be very certain to classify this as "Chinstrap".**
+
+
+### Prediction 2
+
+Predict the test set, both as a proportion and as a class. Plot the predictions on your plot from part d. Using the class predictions report the confusion table and the misclassification error for the test set.
+
+```{r}
+# Extract predictions on the probability scale - b0 + b1x1
+d_aug_prob_fit <- predict(penguin_fit$fit, 
+                      penguins_test,
+                      type.predict = "link")
+
+
+d_aug_prob <-  augment(penguin_fit, 
+                      penguins_test,
+                      type.predict = "link")
+d_aug_prob <- cbind(d_aug_prob,d_aug_prob_fit) 
+```
+
+
+```{r test}
+
+pportion_penguin <- penguins_train %>% janitor::tabyl(dummy_species) %>% as_tibble()
+plot_test <- d_aug_prob %>% 
+  ggplot() +
+  geom_point(aes(x = d_aug_prob_fit, y = .pred_class, color = dummy_species), size = 2) +
+   geom_point(aes(x = d_aug_prob_fit, y = .pred_class, color = dummy_species), size = 2, na.rm=TRUE) +
+  theme_bw()
+plot_test %>% 
+  plotly::ggplotly()
+```
+
+**From the plot above, there are 2 misclassification. The overall misclassification rate is** `r 0.0270*100` **%, with the Chinstrap's one being 0% and Adelie's one being** `r 0.0870 *100`**%.**
+
+
+```{r}
+# misclassification rates.
+penguin_pred <- augment(penguin_fit, penguins_test)
+penguin_pred %>% 
+  count(dummy_species, .pred_class) %>%
+  pivot_wider(names_from = dummy_species, values_from = n, values_fill = 0) %>% 
+  kbl ( caption = "Confusion Matrix (Test set)")%>% 
+   kable_paper("hover")
+```
+
+
+### We found a peculiar point.
+
+Observation 55 is misclassified by the model. Here explains why it was likely confused:
+
+**The 0 line separates the 2 species; if the predicted values is <0 on the axis of linear combination, the model classifies the result has Adelie, vice versa. Here observation 55's predicted value is <0, hence the model see it as Adelie. **
+
+**The attribution mighe be:**
+
+**1) This penguin has the similar characteristic of Adelie albeit Chinstrap, meaning that it might has malnutrition, or naturally has Adelie’s characteristic.**
+
+**2) The model is trained with imbalanced training dataset with Adelie weighting 68.97%. The ambiguous values of Observation 55 makes the model decision prones to Adelie, as it cannot learn sufficient patterns from the minority class (i.e., Chinstrap). **
+
+
+### Linear combination
+
+Starting with the linear combination provided by the logistic regression model, converted to a projection basis, use a manual tour with the spinifex package to determine which variable(s) might **not** be important for separating the two classes (code to help you is below). 
+
+```{r}
+library(spinifex)
+lin_comb <- penguin_fit$fit$coefficients
+lr_proj <- tibble(P1 = lin_comb[-1]/sqrt(sum(lin_comb[-1]^2)))
+mt   <- manual_tour(lr_proj, manip_var = 1)
+
+ggt <- ggtour(mt, penguins_std[,2:5], angle = 0.05) +
+  proto_density(aes_args = list(
+    color = penguins_std$species, 
+    fill = penguins_std$species)) +
+  proto_basis1d() +
+  proto_origin1d()
+
+animate_plotly(ggt)
+```
+
+**Both species have the best split when the frame is set to be 66, in which  $bl$  is the best variable with the longest bar. Whereas variable $fl$ is the most trivial (unimportant) one for separating the two classes, with the shortest bar. When sliding the frame of manural tour, $fl$ is the always shortest.**
+
