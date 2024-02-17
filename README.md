@@ -1,1 +1,1 @@
-https://www.jasoncysiu.github.io/penguin/report.html
+https://jasoncysiu.github.io/penguin/report.html
